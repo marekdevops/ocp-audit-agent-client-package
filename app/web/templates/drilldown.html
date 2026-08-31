@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-title">
+  <div>
+    <span class="eyebrow">Metric evidence</span>
+    <h2>Drill-down</h2>
+  </div>
+  <div class="status-strip">
+    <span>Active findings</span>
+    <strong>{{ summary.findings_by_severity.values()|sum }}</strong>
+    <span>total</span>
+  </div>
+</section>
+{% if anonymized %}<section class="privacy-banner">Output anonymization is enabled. Resource names, namespaces, node names and event details are shown as stable aliases.</section>{% endif %}
+
+<section class="drilldown-shell">
+  <div class="section-head"><h2>Metric Drill-Down</h2><span class="hint">Use dashboard metrics or the sections below to inspect evidence.</span></div>
+  <div class="drilldown-grid">
+    <article id="drill-events" class="detail-card">
+      <div class="section-head"><h3>Events last hour</h3><a href="/events">Full events</a></div>
+      <table class="compact"><tr><th>Time</th><th>Severity</th><th>Resource</th><th>Reason</th><th>Message</th></tr>
+      {% for event in drilldowns.recent_events %}<tr><td>{{ event.timestamp }}</td><td class="{{ event.severity }}">{{ event.severity }}</td><td class="mono">{{ event.namespace or "-" }}/{{ event.involved_kind }}/{{ event.involved_name }}</td><td>{{ event.reason }}</td><td><div class="scroll-field log-field">{{ event.message }}</div></td></tr>{% else %}<tr><td colspan="5" class="empty">No recent events recorded.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-problem-pods" class="detail-card">
+      <div class="section-head"><h3>Workload pod health</h3><a href="/findings?category=workload-health">Workload findings</a></div>
+      <table class="compact"><tr><th>Severity</th><th>Pod</th><th>Reason</th><th>Recommendation</th><th>Evidence</th></tr>
+      {% for f in drilldowns.problem_pods %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td class="mono">{{ f.resource_kind }}/{{ f.namespace or "-" }}/{{ f.resource_name or "-" }}{% if f.pod_scope %}<br><span class="workload-scope">{{ f.pod_scope }}</span>{% endif %}</td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td>{{ f.recommendation }}</td><td><code class="scroll-field evidence-field">{{ f.evidence_obj|json }}</code></td></tr>{% else %}<tr><td colspan="5" class="empty">No active workload pod findings.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-nodes" class="detail-card">
+      <div class="section-head"><h3>Node readiness and host OS</h3><a href="/findings?category=node-health">Node findings</a></div>
+      <table class="compact"><tr><th>Node</th><th>Ready</th><th>OS</th><th>Kernel</th><th>Runtime</th><th>Pressure</th><th>Taints</th></tr>
+      {% for node in node_host_os.rows %}<tr><td class="mono">{{ node.name }}</td><td class="{% if node.ready == 'True' %}Info{% else %}Critical{% endif %}">{{ node.ready }}</td><td>{{ node.os_image }}</td><td class="mono">{{ node.kernel }}</td><td class="mono">{{ node.runtime }}</td><td class="{% if node.pressures != 'none' %}High{% endif %}">{{ node.pressures }}</td><td>{{ node.taints }}</td></tr>{% else %}<tr><td colspan="7" class="empty">No node observations yet.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-node-pressure" class="detail-card">
+      <div class="section-head"><h3>Node pressure</h3><a href="/findings?category=node-health">Node findings</a></div>
+      <table class="compact"><tr><th>Severity</th><th>Node</th><th>Reason</th><th>Recommendation</th><th>Evidence</th></tr>
+      {% for f in drilldowns.node_findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td class="mono">{{ f.resource_name or "-" }}</td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td>{{ f.recommendation }}</td><td><code class="scroll-field evidence-field">{{ f.evidence_obj|json }}</code></td></tr>{% else %}<tr><td colspan="5" class="empty">No active node-health findings.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-cni" class="detail-card">
+      <div class="section-head"><h3>CNI status</h3><a href="/findings?category=networking">Networking findings</a></div>
+      <table class="compact"><tr><th>Component</th><th>Status</th><th>Provider</th><th>Pods ready</th><th>DaemonSets</th><th>Reason</th><th>Observed</th></tr>
+      {% for item in drilldowns.cni_rows %}<tr><td class="mono">{{ item.name }}</td><td class="{% if item.status in ['Degraded','Unknown'] %}High{% else %}Info{% endif %}">{{ item.status }}</td><td>{{ item.provider }}</td><td class="mono">{{ item.pods_ready if item.pods_ready is not none else "-" }}/{{ item.pods_total if item.pods_total is not none else "-" }}</td><td><code class="scroll-field status-field">{{ item.daemonsets|json }}</code></td><td>{{ item.reason }}</td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="7" class="empty">No CNI component observation yet.</td></tr>{% endfor %}
+      </table>
+      <h4>Related CNI findings</h4>
+      <table class="compact"><tr><th>Severity</th><th>Finding</th><th>Recommendation</th><th>Evidence</th></tr>
+      {% for f in drilldowns.cni_findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td>{{ f.recommendation }}</td><td><code class="scroll-field evidence-field">{{ f.evidence_obj|json }}</code></td></tr>{% else %}<tr><td colspan="4" class="empty">No active CNI findings.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-csi" class="detail-card">
+      <div class="section-head"><h3>CSI drivers</h3><a href="/findings?category=storage">Storage findings</a></div>
+      <table class="compact"><tr><th>Name</th><th>Status</th><th>Observed</th></tr>
+      {% for item in csi_drivers %}<tr><td class="mono">{{ item.name }}</td><td>{{ item.status or "-" }}</td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="3" class="empty">No CSIDriver objects observed. This can be normal when the cluster has no CSI-backed storage configured.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    <article id="drill-pvc" class="detail-card">
+      <div class="section-head"><h3>PVC problems</h3><a href="/findings?category=storage">Storage findings</a></div>
+      <table class="compact"><tr><th>Namespace</th><th>Name</th><th>Status</th><th>StorageClass</th><th>Observed</th></tr>
+      {% for pvc in drilldowns.problem_pvcs %}<tr><td class="mono">{{ pvc.namespace or "-" }}</td><td class="mono">{{ pvc.name }}</td><td class="High">{{ pvc.status }}</td><td>{{ pvc.storage_class }}</td><td>{{ pvc.timestamp }}</td></tr>{% else %}<tr><td colspan="5" class="empty">No Pending/Lost PVCs observed.</td></tr>{% endfor %}
+      </table>
+      <h4>Related storage findings</h4>
+      <table class="compact"><tr><th>Severity</th><th>Resource</th><th>Reason</th><th>Recommendation</th></tr>
+      {% for f in drilldowns.storage_findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td class="mono">{{ f.resource_kind }}/{{ f.namespace or "-" }}/{{ f.resource_name or "-" }}</td><td>{{ f.title }}</td><td>{{ f.recommendation }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No active storage findings.</td></tr>{% endfor %}
+      </table>
+    </article>
+
+    {% for sev in ["Critical","High","Medium","Low","Info"] %}
+    <article id="drill-severity-{{ sev }}" class="detail-card">
+      <div class="section-head"><h3>{{ sev }} findings</h3><a href="/findings?severity={{ sev }}">View all</a></div>
+      <table class="compact"><tr><th>Category</th><th>Resource</th><th>Reason</th><th>Recommendation</th><th>Last seen</th></tr>
+      {% for f in drilldowns.severity[sev] %}<tr><td>{{ f.category }}</td><td class="mono">{{ f.resource_kind }}/{{ f.namespace or "-" }}/{{ f.resource_name or "-" }}</td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td>{{ f.recommendation }}</td><td>{{ f.last_seen }}</td></tr>{% else %}<tr><td colspan="5" class="empty">No active {{ sev }} findings.</td></tr>{% endfor %}
+      </table>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

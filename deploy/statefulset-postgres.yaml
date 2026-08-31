@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ocp-audit-postgres
+  namespace: ocp-audit
+spec:
+  serviceName: ocp-audit-postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: ocp-audit-agent, component: postgres}
+  template:
+    metadata:
+      labels: {app: ocp-audit-agent, component: postgres}
+    spec:
+      serviceAccountName: ocp-audit-agent
+      automountServiceAccountToken: false
+      containers:
+      - name: postgres
+        image: quay.io/example/ocp-audit-agent:latest
+        imagePullPolicy: Always
+        command: ["/app/postgres-entrypoint.sh"]
+        env:
+        - name: POSTGRES_USER
+          value: ocp_audit
+        - name: POSTGRES_DB
+          value: ocp_audit
+        # CSI volumes commonly contain lost+found at their root.  PostgreSQL
+        # must initialize beneath that mount point rather than in it.
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: ocp-audit-postgres, key: password}
+        ports:
+        - containerPort: 5432
+        readinessProbe:
+          exec: {command: ["sh", "-ec", "pg_isready -h 127.0.0.1 -U ocp_audit -d ocp_audit"]}
+          periodSeconds: 5
+        livenessProbe:
+          exec: {command: ["sh", "-ec", "pg_isready -h 127.0.0.1 -U ocp_audit -d ocp_audit"]}
+          periodSeconds: 10
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: {cpu: 250m, memory: 512Mi}
+          limits: {cpu: "2", memory: 2Gi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim: {claimName: ocp-audit-postgres}
+      - name: tmp
+        emptyDir: {}

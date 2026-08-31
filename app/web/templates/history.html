@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-title">
+  <div><span class="eyebrow">Pod lifecycle</span><h2>Disappeared Pods</h2></div>
+  <div class="status-strip"><span>No longer visible</span><strong>{{ history_count }}</strong></div>
+</section>
+<section>
+  <div class="section-head"><h2>Pods no longer present in current inventory</h2><span class="hint">Only Pods that appeared and later disappeared are retained here. Current Pods remain in the main Pods view.</span></div>
+  <form class="filters" method="get">
+    <select name="namespace"><option value="">namespace</option>{% for value in filter_options.namespaces %}<option value="{{ value }}" {% if filters.namespace == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="event_type"><option value="">disappearance source</option>{% for value in filter_options.event_types %}<option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <input name="name" placeholder="pod name" value="{{ filters.name or '' }}">
+    <button>Filter</button><a class="button-link" href="/history">Clear</a>
+  </form>
+  <div id="history-table" class="paginated-table" data-paginated><div class="table-loading"><span></span><b>Loading history…</b></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th>Appeared</th><th>Disappeared</th><th>Source</th><th>Namespace</th><th>Pod</th><th>Last status</th></tr></thead><tbody>
+  {% for item in history %}<tr><td>{{ item.appeared_at or "-" }}</td><td>{{ item.disappeared_at }}</td><td>{{ item.event_type }}</td><td class="mono">{{ item.namespace or "-" }}</td><td class="mono">{{ item.name }}</td><td><code class="scroll-field status-field">{{ item.status or "-" }}</code></td></tr>{% else %}<tr><td colspan="6" class="empty">No disappeared Pods recorded yet.</td></tr>{% endfor %}
+  </tbody></table></div>{% include "_pagination.html" %}</div>
+</section>
+{% endblock %}

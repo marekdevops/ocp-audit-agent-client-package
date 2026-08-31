@@ -1,0 +1,78 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ocp-audit-agent-snapshot
+  namespace: ocp-audit
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  # Keep one recent result for quick diagnosis. The TTL below removes its Job
+  # and Pod after an hour, so completed snapshot workloads do not accumulate.
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: ocp-audit-agent
+          automountServiceAccountToken: true
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels: {app: ocp-audit-agent, component: server}
+                topologyKey: kubernetes.io/hostname
+          initContainers:
+          - name: wait-for-postgres
+            image: quay.io/example/ocp-audit-agent:latest
+            imagePullPolicy: Always
+            command:
+            - sh
+            - -ec
+            - until pg_isready -h ocp-audit-postgres -p 5432 -U ocp_audit -d ocp_audit; do sleep 2; done
+            resources:
+              requests: {cpu: 10m, memory: 16Mi}
+              limits: {cpu: 100m, memory: 64Mi}
+            securityContext:
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+              seccompProfile: {type: RuntimeDefault}
+          containers:
+          - name: snapshot
+            image: quay.io/example/ocp-audit-agent:latest
+            imagePullPolicy: Always
+            command: ["ocp-audit-agent", "snapshot"]
+            envFrom:
+            - configMapRef:
+                name: ocp-audit-agent-config
+            env:
+            - name: AUDIT_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: ocp-audit-postgres, key: password}
+            volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            resources:
+              requests: {cpu: 100m, memory: 256Mi}
+              limits: {cpu: "2", memory: 2Gi}
+            securityContext:
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+              seccompProfile: {type: RuntimeDefault}
+          volumes:
+          - name: data
+            # Snapshots are persisted in PostgreSQL; this job has no durable files
+            # to retain and must not contend for the server's RWO reports volume.
+            emptyDir: {}
+          - name: tmp
+            emptyDir: {}

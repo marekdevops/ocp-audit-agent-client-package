@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Neto Kube Auditor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">
+      <img src="/static/logo/logo_neto.png" alt="Neto Kube Auditor logo">
+      <span>Neto Kube Auditor</span>
+    </a>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/drilldown">Drill-down</a>
+      <a href="/pods">Pods</a>
+      <a href="/history">History</a>
+      <a href="/events">Events</a>
+      <a href="/findings">Findings</a>
+      <a href="/jobs">Jobs</a>
+      <a href="/reports">Reports</a>
+      <a href="/anonymization">Anonymization</a>
+    </nav>
+    <form class="privacy-toggle" method="post" action="/ui/anonymization?next={{ request.url.path }}&enabled={% if anonymized %}false{% else %}true{% endif %}">
+      {% if anonymized %}
+      <button title="{% if allow_ui_deanonymize %}Show raw names in this browser session{% else %}Raw output is disabled by server policy{% endif %}" {% if not allow_ui_deanonymize %}disabled{% endif %}>Anonymized</button>
+      {% else %}
+      <button class="danger" title="Re-enable anonymized output">Raw visible</button>
+      {% endif %}
+    </form>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <script>
+  document.addEventListener("click", async (event) => {
+    const link = event.target.closest("a[data-page-link]");
+    if (!link) return;
+    const current = link.closest("[data-paginated]");
+    if (!current) return;
+    event.preventDefault();
+    current.classList.add("is-loading");
+    try {
+      const response = await fetch(link.href, {headers: {"X-Requested-With": "table-pagination"}});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const documentCopy = new DOMParser().parseFromString(await response.text(), "text/html");
+      const replacement = documentCopy.getElementById(current.id);
+      if (!replacement) throw new Error("Paginated table missing in response");
+      current.replaceWith(replacement);
+      history.pushState({}, "", link.href);
+      replacement.scrollIntoView({behavior: "smooth", block: "start"});
+    } catch (error) {
+      current.classList.remove("is-loading");
+      window.location.assign(link.href);
+    }
+  });
+  window.addEventListener("popstate", () => window.location.reload());
+
+  async function refreshLiveRegion(region) {
+    if (!region || region.dataset.liveLoading === "true") return region;
+    region.dataset.liveLoading = "true";
+    try {
+      const response = await fetch(region.dataset.liveUrl, {headers: {"X-Requested-With": "live-status"}});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const documentCopy = new DOMParser().parseFromString(await response.text(), "text/html");
+      const replacement = documentCopy.getElementById(region.id);
+      if (!replacement) throw new Error("Live region missing in response");
+      region.replaceWith(replacement);
+      syncReportGenerator();
+      return replacement;
+    } catch (error) {
+      region.dataset.liveLoading = "false";
+      return region;
+    }
+  }
+
+  function syncReportGenerator() {
+    const form = document.querySelector("[data-report-generator]");
+    if (!form) return;
+    const button = form.querySelector("button[type=submit]");
+    const activity = document.getElementById("report-activity");
+    const running = activity?.dataset.liveActive === "true";
+    button.disabled = running;
+    button.textContent = running ? "Generating…" : button.dataset.idleLabel;
+  }
+
+  document.querySelector("[data-report-generator]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type=submit]");
+    const status = document.getElementById("report-generator-status");
+    const data = new FormData(form);
+    const parameters = new URLSearchParams({
+      fmt: data.get("fmt") || "html",
+      anonymize: data.get("anonymize") || "true",
+    });
+    button.disabled = true;
+    button.textContent = "Starting…";
+    status.textContent = "Starting report generation…";
+    try {
+      const response = await fetch(`/api/jobs/report?${parameters}`, {
+        method: "POST",
+        headers: {"Accept": "application/json"},
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+      status.textContent = result.status === "already_running"
+        ? "Report generation is already in progress."
+        : "Report generation started. Status will update automatically.";
+      await refreshLiveRegion(document.getElementById("report-activity"));
+    } catch (error) {
+      status.textContent = "Could not start report generation. Reloading…";
+      form.submit();
+    }
+    syncReportGenerator();
+  });
+
+  syncReportGenerator();
+  window.setInterval(() => {
+    document.querySelectorAll("[data-live-url][data-live-active='true']").forEach(refreshLiveRegion);
+  }, 2000);
+  </script>
+</body>
+</html>

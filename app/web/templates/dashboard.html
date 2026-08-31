@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-title">
+  <div>
+    <span class="eyebrow">Kubernetes / OpenShift audit overview</span>
+    <h2>Current cluster risk</h2>
+  </div>
+  <div class="status-strip">
+    <span>Live DB</span>
+    <strong>{{ summary.events_last_hour }}</strong>
+    <span>events in last hour</span>
+  </div>
+</section>
+{% if anonymized %}<section class="privacy-banner">Output anonymization is enabled. Resource names, namespaces, node names and event details are shown as stable aliases.</section>{% endif %}
+
+<section>
+  <div class="section-head"><h2>Audit coverage</h2><a href="/api/summary">Coverage API</a></div>
+  <div class="health-list">
+    <div><span>Checked APIs</span><strong>{{ audit_coverage.checked }}</strong><small>snapshot {{ audit_coverage.snapshot_status }}</small></div>
+    <div><span>Collector errors</span><strong class="{% if audit_coverage.errors %}High{% else %}Info{% endif %}">{{ audit_coverage.errors }}</strong><small>must not be read as PASS</small></div>
+    <div><span>Not applicable</span><strong>{{ audit_coverage.not_applicable }}</strong><small>APIs not served</small></div>
+    <div><span>Inventory only</span><strong>{{ audit_coverage.inventory_only }}</strong><small>collected without dedicated rule</small></div>
+    <div><span>Outside API mode</span><strong>{{ audit_coverage.not_checked|length }}</strong><small>host, backup or scanner checks</small></div>
+  </div>
+</section>
+
+<section class="metric-grid">
+  <a class="metric primary" href="/findings"><span>Current findings</span><strong>{{ summary.current_findings }}</strong><em>Open findings</em></a>
+  <a class="metric" href="/drilldown#drill-problem-pods"><span>Problem pods</span><strong>{{ summary.problematic_pods }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="#incidents"><span>Current incidents</span><strong class="{% if summary.current_incidents > 0 %}High{% else %}Info{% endif %}">{{ summary.current_incidents }}</strong><em>View correlation</em></a>
+  <a class="metric" href="/drilldown#drill-events"><span>Events last hour</span><strong>{{ summary.events_last_hour }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="/drilldown#drill-nodes"><span>Nodes ready</span><strong>{{ node_host_os.ready }}/{{ node_host_os.total }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="/drilldown#drill-node-pressure"><span>Nodes pressure</span><strong class="{% if node_host_os.pressure > 0 %}High{% else %}Info{% endif %}">{{ node_host_os.pressure }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="/drilldown#drill-cni"><span>CNI degraded</span><strong class="{% if infra_summary.cni_degraded > 0 %}High{% else %}Info{% endif %}">{{ infra_summary.cni_degraded }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="/drilldown#drill-csi"><span>CSI drivers</span><strong>{{ infra_summary.csi_drivers }}</strong><em>Open drill-down</em></a>
+  <a class="metric" href="/drilldown#drill-pvc"><span>PVC problems</span><strong class="{% if infra_summary.pvc_problem > 0 %}High{% else %}Info{% endif %}">{{ infra_summary.pvc_problem }}</strong><em>Open drill-down</em></a>
+  {% for sev in ["Critical","High","Medium","Low"] %}
+  <a class="metric" href="/drilldown#drill-severity-{{ sev }}"><span>{{ sev }}</span><strong class="{{ sev }}">{{ summary.findings_by_severity.get(sev, 0) }}</strong><em>Open drill-down</em></a>
+  {% endfor %}
+  <a class="metric" href="/findings"><span>Review</span><strong class="Medium">{{ summary.review_findings }}</strong><em>Timestamp validation</em></a>
+  <a class="metric" href="/findings"><span>Historical</span><strong class="Info">{{ summary.historical_findings }}</strong><em>Retained context</em></a>
+</section>
+
+<div class="dashboard-layout">
+  <section>
+    <div class="section-head"><h2>Current Priority Findings</h2><a href="/findings">View all</a></div>
+    <div class="table-scroll"><table class="compact dashboard-table priority-table"><tr><th>Severity</th><th>Resource</th><th>Title</th><th>Recommendation</th></tr>
+    {% for f in priority_findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td class="mono">{{ f.resource }}</td><td>{{ f.title }}<br><small class="finding-meta">{{ f.finding_id }}</small></td><td>{{ f.recommendation }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No current Critical or High findings.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Distribution API Inventory</h2><a href="/api/summary">API</a></div>
+    <div class="health-list">
+      <div><span>ClusterVersion</span><strong>{{ versions|length }}</strong><small>observed objects</small></div>
+      <div><span>ClusterOperators</span><strong>{{ operators|length }}</strong><small>observed objects</small></div>
+      <div><span>MachineConfigPools</span><strong>{{ mcps|length }}</strong><small>observed objects</small></div>
+    </div>
+  </section>
+</div>
+
+<div class="dashboard-layout" id="incidents">
+  <section>
+    <div class="section-head"><h2>Correlated Incidents</h2><a href="/reports">Reports</a></div>
+    <div class="table-scroll"><table class="compact dashboard-table incident-table"><tr><th>ID</th><th>Status</th><th>Severity</th><th>Cause / window</th><th>Affected</th></tr>
+    {% for item in incidents %}<tr><td class="mono">{{ item.id }}</td><td><span class="badge {{ item.temporal_status }}">{{ item.temporal_status }}</span></td><td><span class="badge {{ item.severity }}">{{ item.severity }}</span></td><td>{{ item.title }}<br><small>{{ item.time_bucket }}</small></td><td>{{ item.resource_count }} resources</td></tr>{% else %}<tr><td colspan="5" class="empty">No correlated log incidents.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+  <section>
+    <div class="section-head"><h2>Current Findings by Category</h2><a href="/findings">Inspect</a></div>
+    <div class="category-list">{% for name, count in category_counts %}<div><span>{{ name }}</span><strong>{{ count }}</strong></div>{% else %}<p class="empty">No current findings.</p>{% endfor %}</div>
+  </section>
+</div>
+
+<section>
+  <div class="section-head"><h2>Node Host OS</h2><a href="/findings?category=node-health">Node findings</a></div>
+  <div class="host-os-grid">
+    <div><span>OS images</span><strong>{{ node_host_os.os_images|length }}</strong><small>{% for value in node_host_os.os_images[:3] %}{{ value }}{% if not loop.last %}<br>{% endif %}{% else %}not observed{% endfor %}</small></div>
+    <div><span>Kernels</span><strong>{{ node_host_os.kernels|length }}</strong><small>{% for value in node_host_os.kernels[:3] %}{{ value }}{% if not loop.last %}<br>{% endif %}{% else %}not observed{% endfor %}</small></div>
+    <div><span>Container runtimes</span><strong>{{ node_host_os.runtimes|length }}</strong><small>{% for value in node_host_os.runtimes[:3] %}{{ value }}{% if not loop.last %}<br>{% endif %}{% else %}not observed{% endfor %}</small></div>
+  </div>
+  <div class="table-scroll"><table class="compact host-os-table"><tr><th>Node</th><th>Ready</th><th>OS image</th><th>Kernel</th><th>Runtime</th><th>Kubelet</th><th>CPU alloc/cap</th><th>Memory alloc/cap</th><th>Pressure</th><th>Taints</th><th>Observed</th></tr>
+  {% for node in node_host_os.rows %}
+    <tr>
+      <td class="mono">{{ node.name or "-" }}</td>
+      <td class="{% if node.ready == 'True' %}Info{% else %}Critical{% endif %}">{{ node.ready }}</td>
+      <td>{{ node.os_image }}</td>
+      <td class="mono">{{ node.kernel }}</td>
+      <td class="mono">{{ node.runtime }}</td>
+      <td class="mono">{{ node.kubelet }}</td>
+      <td class="mono">{{ node.allocatable_cpu }}/{{ node.capacity_cpu }}</td>
+      <td class="mono">{{ node.allocatable_memory }}/{{ node.capacity_memory }}</td>
+      <td class="{% if node.pressures != 'none' %}High{% endif %}">{{ node.pressures }}</td>
+      <td>{{ node.taints }}</td>
+      <td>{{ node.observed }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="11" class="empty">No Node observations yet. Run snapshot or watcher to collect node host OS data.</td></tr>
+  {% endfor %}
+  </table></div>
+</section>
+
+<div class="dashboard-layout">
+  <section>
+    <div class="section-head"><h2>CNI Status</h2><a href="/findings?category=networking">Networking findings</a></div>
+    <div class="health-list">
+      <div><span>Detected CNI components</span><strong>{{ cni_components|length }}</strong><small>{{ infra_summary.network_attachments }} NetworkAttachmentDefinitions observed</small></div>
+      <div><span>Degraded / unknown</span><strong class="{% if infra_summary.cni_degraded > 0 %}High{% else %}Info{% endif %}">{{ infra_summary.cni_degraded }}</strong><small>From CNI pods and daemonsets</small></div>
+    </div>
+    <div class="table-scroll"><table class="compact dashboard-table dashboard-table-3"><tr><th>Component</th><th>Status</th><th>Observed</th></tr>
+    {% for item in cni_components %}<tr><td class="mono">{{ item.name }}</td><td class="{% if item.status in ['Degraded','Unknown'] %}High{% else %}Info{% endif %}">{{ item.status or "unknown" }}</td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="3" class="empty">No CNI component observation yet. Run snapshot to detect CNI state.</td></tr>{% endfor %}
+    </table></div>
+    <h3 class="subsection-title">Related CNI findings</h3>
+    <div class="table-scroll"><table class="compact dashboard-table dashboard-evidence-table"><tr><th>Severity</th><th>Finding</th><th>Recommendation</th><th>Evidence</th></tr>
+    {% for f in cni_findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td>{{ f.recommendation }}</td><td><code class="scroll-field evidence-field">{{ f.evidence_obj|json }}</code></td></tr>{% else %}<tr><td colspan="4" class="empty">No active CNI findings.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>CSI / Storage</h2><a href="/findings?category=storage">Storage findings</a></div>
+    <div class="health-list">
+      <div><span>StorageClasses</span><strong>{{ infra_summary.storage_classes }}</strong><small>{{ infra_summary.pvs }} PVs, {{ infra_summary.pvcs }} PVCs</small></div>
+      <div><span>CSI coverage</span><strong>{{ infra_summary.csi_nodes }}</strong><small>{{ infra_summary.csi_drivers }} drivers, {{ infra_summary.csi_capacity }} capacity objects</small></div>
+      <div><span>PV/PVC problems</span><strong class="{% if infra_summary.pv_problem + infra_summary.pvc_problem > 0 %}High{% else %}Info{% endif %}">{{ infra_summary.pv_problem + infra_summary.pvc_problem }}</strong><small>{{ infra_summary.pv_problem }} PV, {{ infra_summary.pvc_problem }} PVC</small></div>
+    </div>
+  </section>
+</div>
+
+<div class="dashboard-layout">
+  <section>
+    <h2>CSI Drivers</h2>
+    <div class="table-scroll"><table class="compact dashboard-table dashboard-table-3"><tr><th>Name</th><th>Status</th><th>Observed</th></tr>
+    {% for item in csi_drivers %}<tr><td class="mono">{{ item.name }}</td><td>{{ item.status or "-" }}</td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="3" class="empty">No CSIDriver objects observed yet.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+  <section>
+    <h2>StorageClasses</h2>
+    <div class="table-scroll"><table class="compact dashboard-table dashboard-table-3"><tr><th>Name</th><th>Status</th><th>Observed</th></tr>
+    {% for item in storage_classes %}<tr><td class="mono">{{ item.name }}</td><td>{{ item.status or "-" }}</td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="3" class="empty">No StorageClass objects observed yet.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+</div>
+
+<section>
+  <div class="section-head"><h2>ClusterOperators</h2><a href="/findings?category=operators">Operator findings</a></div>
+  <div class="table-scroll"><table class="compact dashboard-table platform-status-table"><tr><th>Name</th><th>State</th><th>Evidence</th><th>Observed</th></tr>
+  {% for item in operators %}<tr><td class="mono">{{ item.name }}</td><td><span class="platform-state {{ item.state_class }}">{{ item.state }}</span></td><td><code class="scroll-field evidence-field">{{ item.evidence }}</code></td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No ClusterOperators observed yet.</td></tr>{% endfor %}
+  </table></div>
+</section>
+
+<div class="dashboard-layout">
+  <section>
+    <h2>ClusterVersion</h2>
+    <div class="table-scroll"><table class="compact dashboard-table platform-status-table"><tr><th>Name</th><th>State</th><th>Evidence</th><th>Observed</th></tr>
+    {% for item in versions %}<tr><td class="mono">{{ item.name }}</td><td><span class="platform-state {{ item.state_class }}">{{ item.state }}</span></td><td><code class="scroll-field evidence-field">{{ item.evidence }}</code></td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No ClusterVersion observed yet.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+  <section>
+    <h2>MachineConfigPools</h2>
+    <div class="table-scroll"><table class="compact dashboard-table platform-status-table"><tr><th>Name</th><th>State</th><th>Evidence</th><th>Observed</th></tr>
+    {% for item in mcps %}<tr><td class="mono">{{ item.name }}</td><td><span class="platform-state {{ item.state_class }}">{{ item.state }}</span></td><td><code class="scroll-field evidence-field">{{ item.evidence }}</code></td><td>{{ item.timestamp }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No MachineConfigPools observed yet.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+</div>
+{% endblock %}

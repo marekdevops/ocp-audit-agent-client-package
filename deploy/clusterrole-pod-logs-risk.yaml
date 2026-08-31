@@ -1,0 +1,10 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ocp-audit-agent-pod-logs-risk
+  annotations:
+    audit.openshift.io/risk: "Pod logs can contain credentials or personal data. Enable only for an approved diagnostic scope."
+rules:
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]

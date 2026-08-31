@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ocp-audit-agent
+  namespace: ocp-audit
+spec:
+  to:
+    kind: Service
+    name: ocp-audit-agent
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  # For clusters requiring backend TLS, switch to reencrypt and add destinationCACertificate.

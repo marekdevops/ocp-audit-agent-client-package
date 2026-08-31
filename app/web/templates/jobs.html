@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="actions">
+  <form method="post" action="/jobs/snapshot"><button>Run snapshot now</button></form>
+  <a class="button-link" href="/reports">Create report</a>
+  <form method="post" action="/jobs/cleanup"><button>Run cleanup now</button></form>
+</section>
+<section id="jobs-activity" data-live-url="/jobs" data-live-active="{{ 'true' if jobs_running else 'false' }}">
+  <h2>Job History</h2>
+  <div class="table-scroll"><table><tr><th>ID</th><th>Type</th><th>Status</th><th>Started</th><th>Finished</th><th>Message</th><th>Result</th><th>Error</th></tr>
+  {% for j in jobs %}<tr><td>{{ j.id }}</td><td>{{ j.job_type }}</td><td><span class="job-status {{ j.status|lower }}"><span aria-hidden="true"></span>{% if j.status == "running" %}Running{% elif j.status == "success" %}Success{% elif j.status == "failed" %}Failed{% else %}{{ j.status }}{% endif %}</span></td><td>{{ j.started_at }}</td><td>{{ j.finished_at or "—" }}</td><td>{{ j.message or "—" }}</td><td>{% if j.report_id %}<a class="button-link" href="/api/reports/{{ j.report_id }}/download">Download report</a>{% elif j.job_type == "report" and j.status == "running" %}<span class="job-progress">Generating…</span>{% else %}—{% endif %}</td><td>{% if j.error %}<span class="job-error">{{ j.error }}</span>{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="8">No jobs yet.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

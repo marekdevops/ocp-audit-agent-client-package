@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-title">
+  <div><div class="eyebrow">Privacy controls</div><h2>Anonymization rules</h2></div>
+  <div class="hint">Changes apply immediately to WebUI and newly generated reports.</div>
+</section>
+<section class="anonymization-settings">
+  <h2>Customer-specific terms</h2>
+  <p class="hint">Enter one proprietary word or phrase per line. A matching fragment is replaced with a stable animal name while the rest of the resource name remains visible. For example, <code>netology-argocd-devops</code> becomes <code>doggy-argocd-devops</code>.</p>
+  <form method="post" action="/anonymization">
+    <label for="terms">Terms to anonymize</label>
+    <textarea id="terms" name="terms" rows="12" spellcheck="false" placeholder="netology&#10;customer-name">{{ terms|join('\n') }}</textarea>
+    <p class="hint">IP addresses are automatically replaced with stable fictional addresses from the non-routable <code>198.18.0.0/15</code> range.</p>
+    <button>Save anonymization rules</button>
+  </form>
+</section>
+{% endblock %}

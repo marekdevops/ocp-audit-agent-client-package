@@ -1,0 +1,9 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ocp-audit-agent-local
+  namespace: ocp-audit
+rules:
+- apiGroups: [""]
+  resources: ["configmaps","pods","persistentvolumeclaims"]
+  verbs: ["get","list","watch"]

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ocp-audit-agent"
+version = "0.1.0"
+description = "Read-only OpenShift/Kubernetes audit agent with WebUI, CLI, PostgreSQL storage and reports."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "typer>=0.12",
+  "kubernetes>=30.1",
+  "jinja2>=3.1",
+  "reportlab>=4.2",
+  "weasyprint>=62.3",
+  "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.2"]
+
+[project.scripts]
+ocp-audit-agent = "app.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

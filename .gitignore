@@ -1,0 +1,8 @@
+# Wyeksportowane archiwum obrazu - do repo trafiają wyłącznie kawałki z image/
+dist/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/

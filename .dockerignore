@@ -1,0 +1,11 @@
+.git
+.pytest_cache
+__pycache__
+*.pyc
+.venv
+audit.db
+reports
+data
+dist
+image
+overlays

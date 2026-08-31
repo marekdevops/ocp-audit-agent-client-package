@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocp-audit-agent-watcher
+  namespace: ocp-audit
+  annotations:
+    audit.neto.io/ha-optional: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ocp-audit-agent, component: watcher}
+  template:
+    metadata:
+      labels: {app: ocp-audit-agent, component: watcher}
+    spec:
+      serviceAccountName: ocp-audit-agent
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels: {app: ocp-audit-agent, component: server}
+            topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: wait-for-postgres
+        image: quay.io/example/ocp-audit-agent:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -ec
+        - until pg_isready -h ocp-audit-postgres -p 5432 -U ocp_audit -d ocp_audit; do sleep 2; done
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 64Mi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: watcher
+        image: quay.io/example/ocp-audit-agent:latest
+        imagePullPolicy: Always
+        command: ["ocp-audit-agent", "watch"]
+        envFrom:
+        - configMapRef:
+            name: ocp-audit-agent-config
+        env:
+        - name: AUDIT_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: ocp-audit-postgres, key: password}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: {cpu: "4", memory: 1Gi}
+          limits: {cpu: "4", memory: 1Gi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+      volumes:
+      - name: data
+        # Watcher state is stored in PostgreSQL.  Do not mount the server's
+        # ReadWriteOnce reports volume here: it may schedule on another node.
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}

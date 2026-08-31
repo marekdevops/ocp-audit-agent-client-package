@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# Build the Neto Kube Auditor image locally, package it for transfer, push it
+# into a cluster and hand over to the interactive installer.
+#
+#   ./build.sh build            build the image locally
+#   ./build.sh save             export it to dist/ocp-audit-agent-<tag>.tar.gz
+#   ./build.sh package          export + split into image/ chunks, committable to git
+#   ./build.sh unpack           reassemble image/ chunks and import the image
+#   ./build.sh load <tar.gz>    import an exported image on another machine
+#   ./build.sh push             push into the cluster registry (route, tunnel, or $REGISTRY)
+#   ./build.sh push-local       force the tunnel path even if a route exists
+#   ./build.sh deploy           run scripts/deploy.sh with the pushed image preselected
+#   ./build.sh all              build + push + deploy
+#
+# Nothing here changes a workload except `deploy`, which is the existing
+# interactive installer and asks before applying anything.
+set -euo pipefail
+
+IMAGE_NAME="${IMAGE_NAME:-ocp-audit-agent}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+LOCAL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+# The image lands in the same namespace the workload runs in: a Pod may pull
+# from its own namespace's imagestreams without any extra image-puller binding.
+NAMESPACE="${NAMESPACE:-ocp-audit}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST_DIR="${REPO_DIR}/dist"
+# Chunks live in the repo so unpacking the package alone delivers a runnable image.
+IMAGE_DIR="${REPO_DIR}/image"
+# GitHub hard-rejects any single file over 100MB; stay well under it.
+CHUNK_SIZE="${CHUNK_SIZE:-90M}"
+# What the cluster itself must use to pull - the service DNS name, not the route.
+INTERNAL_REF="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/${LOCAL_IMAGE}"
+
+# podman if present, docker otherwise
+ENGINE="${ENGINE:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docker)}"
+# Set SUDO=sudo when the container engine needs root. Only the engine is
+# elevated - oc keeps running as the invoking user, with their cluster login.
+SUDO="${SUDO:-}"
+
+engine() { ${SUDO} "${ENGINE}" "$@"; }
+
+die() { echo "error: $*" >&2; exit 1; }
+info() { echo "==> $*"; }
+
+cli() {
+  if command -v oc >/dev/null 2>&1; then echo oc
+  elif command -v kubectl >/dev/null 2>&1; then echo kubectl
+  else die "neither oc nor kubectl found"
+  fi
+}
+
+cmd_build() {
+  info "building ${LOCAL_IMAGE} with ${ENGINE}"
+  engine build --pull -f Dockerfile -t "${LOCAL_IMAGE}" "${REPO_DIR}"
+  info "done: $(engine images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep "^${LOCAL_IMAGE} " || echo "${LOCAL_IMAGE}")"
+}
+
+cmd_save() {
+  mkdir -p "${DIST_DIR}"
+  local out="${DIST_DIR}/${IMAGE_NAME}-${IMAGE_TAG}.tar.gz"
+  info "exporting ${LOCAL_IMAGE} -> ${out}"
+  engine save "${LOCAL_IMAGE}" | gzip -9 > "${out}"
+  ( cd "${DIST_DIR}" && sha256sum "$(basename "${out}")" > "$(basename "${out}").sha256" )
+  info "$(du -h "${out}" | cut -f1) - copy this file to the target environment"
+  info "checksum: $(cat "${out}.sha256")"
+}
+
+cmd_load() {
+  local archive="${1:-}"
+  [[ -f "${archive}" ]] || die "usage: $0 load <path-to-tar.gz>"
+  info "importing ${archive}"
+  gunzip -c "${archive}" | engine load
+}
+
+cmd_package() {
+  cmd_save
+  local src="${DIST_DIR}/${IMAGE_NAME}-${IMAGE_TAG}.tar.gz"
+  rm -rf "${IMAGE_DIR}"
+  mkdir -p "${IMAGE_DIR}"
+  info "splitting into ${CHUNK_SIZE} chunks -> image/"
+  split -b "${CHUNK_SIZE}" -d -a 2 "${src}" "${IMAGE_DIR}/${IMAGE_NAME}.tar.gz.part"
+  ( cd "${IMAGE_DIR}" && sha256sum ./*.part?? > SHA256SUMS )
+  cp "${src}.sha256" "${IMAGE_DIR}/image.tar.gz.sha256"
+  info "$(ls -1 "${IMAGE_DIR}"/*.part?? | wc -l) chunk(s):"
+  ls -lh "${IMAGE_DIR}" | tail -n +2 | awk '{print "    " $9 "  " $5}'
+  info "ship the image/ directory; offline side runs: ./build.sh unpack"
+}
+
+cmd_unpack() {
+  [[ -d "${IMAGE_DIR}" ]] || die "no image/ directory - was the package built with './build.sh package'?"
+  local parts=( "${IMAGE_DIR}"/*.part?? )
+  [[ -e "${parts[0]}" ]] || die "no chunks found in ${IMAGE_DIR}"
+
+  info "verifying ${#parts[@]} chunk(s)"
+  ( cd "${IMAGE_DIR}" && sha256sum -c SHA256SUMS ) || die "chunk checksum mismatch - transfer was incomplete"
+
+  mkdir -p "${DIST_DIR}"
+  local out="${DIST_DIR}/${IMAGE_NAME}-${IMAGE_TAG}.tar.gz"
+  info "reassembling -> ${out}"
+  cat "${parts[@]}" > "${out}"
+  # The offline side never ran `save`, so take the archive checksum from the package.
+  cp "${IMAGE_DIR}/image.tar.gz.sha256" "${out}.sha256"
+  ( cd "${DIST_DIR}" && sha256sum -c "$(basename "${out}").sha256" ) \
+    || die "reassembled archive does not match its checksum"
+
+  cmd_load "${out}"
+  info "image imported - continue with: ./build.sh push"
+}
+
+# podman verifies TLS on localhost; docker already treats 127.0.0.0/8 as insecure
+tls_flags() {
+  if [[ "${1:-}" == "insecure" && "${ENGINE}" == *podman* ]]; then
+    echo "--tls-verify=false"
+  fi
+  # Must succeed even when it prints nothing: the caller assigns it under set -e.
+  return 0
+}
+
+# The internal registry refuses a push into a namespace that does not exist yet.
+ensure_namespace() {
+  local k; k="$(cli)"
+  "${k}" get namespace "${NAMESPACE}" >/dev/null 2>&1 && return 0
+  info "creating namespace ${NAMESPACE}"
+  "${k}" create namespace "${NAMESPACE}"
+}
+
+do_push() {
+  local registry="$1" mode="${2:-}"
+  local target="${registry}/${NAMESPACE}/${LOCAL_IMAGE}"
+  local flags
+  flags="$(tls_flags "${mode}")"
+
+  # Running the whole script under sudo makes oc run as root, without the
+  # invoking user's kubeconfig - the credentials then arrive empty and the
+  # registry answers "invalid username/password". Fail loudly instead.
+  local user token
+  user="$(oc whoami 2>/dev/null || true)"
+  token="$(oc whoami -t 2>/dev/null || true)"
+  if [[ -z "${user}" || -z "${token}" ]]; then
+    die "oc returned no user or token$([[ ${EUID} -eq 0 ]] && echo " (running as root: use 'SUDO=sudo $0 ...' instead of 'sudo $0 ...')").
+Check with: oc whoami && oc whoami -t"
+  fi
+
+  info "logging in to ${registry} as ${user}"
+  engine login ${flags} -u "${user}" -p "${token}" "${registry}"
+  info "pushing ${target}"
+  engine tag "${LOCAL_IMAGE}" "${target}"
+  engine push ${flags} "${target}"
+  echo
+  info "pushed. The cluster pulls this image as:"
+  echo "  ${INTERNAL_REF}"
+  info "install with:"
+  echo "  ./build.sh deploy"
+}
+
+# Push to an arbitrary registry (corporate Quay/Harbor, or a plain localhost:5000
+# dev registry). No oc login involved; use `${ENGINE} login` beforehand.
+do_push_plain() {
+  local registry="$1"
+  local target="${registry}/${NAMESPACE}/${LOCAL_IMAGE}"
+  local flags
+  flags="$(tls_flags "${REGISTRY_INSECURE:+insecure}")"
+  info "pushing ${target}"
+  engine tag "${LOCAL_IMAGE}" "${target}"
+  engine push ${flags} "${target}"
+  echo
+  info "pushed. Use this reference in the installer:"
+  echo "  ${target}"
+  info "install with:"
+  echo "  AUDIT_DEFAULT_IMAGE=${target} ./build.sh deploy"
+}
+
+# Push through a local tunnel to the registry Service. Needs no route and no
+# cluster change at all - just port-forward rights in openshift-image-registry.
+push_via_port_forward() {
+  local port="${LOCAL_PORT:-5000}"
+  while (echo >"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; do
+    info "port ${port} is busy, trying $((port + 1))"
+    port=$((port + 1))
+  done
+
+  info "no registry route - tunnelling to svc/image-registry on 127.0.0.1:${port}"
+  local pf_log
+  pf_log="$(mktemp)"
+  oc port-forward -n openshift-image-registry svc/image-registry "${port}:5000" >"${pf_log}" 2>&1 &
+  local pf_pid=$!
+  # shellcheck disable=SC2064
+  trap "kill ${pf_pid} 2>/dev/null || true; rm -f '${pf_log}'" EXIT
+
+  local ready=""
+  for _ in $(seq 1 60); do
+    if (echo >"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then ready=yes; break; fi
+    # No point waiting out the timeout if oc already gave up.
+    kill -0 "${pf_pid}" 2>/dev/null || break
+    sleep 0.5
+  done
+
+  if [[ -z "${ready}" ]]; then
+    echo "--- oc port-forward output ---" >&2
+    cat "${pf_log}" >&2
+    echo "------------------------------" >&2
+    die "the tunnel did not come up. Diagnose with:
+  oc auth can-i create pods/portforward -n openshift-image-registry
+  oc get configs.imageregistry.operator.openshift.io/cluster -o jsonpath='{.spec.managementState}'
+  oc get pods -n openshift-image-registry
+  oc get endpoints image-registry -n openshift-image-registry
+
+If the registry is Removed or you have no access to that namespace, push to
+your own registry instead:
+  REGISTRY=rejestr.firma.local ${SUDO:+SUDO=${SUDO} }NAMESPACE=${NAMESPACE} $0 push"
+  fi
+
+  do_push "127.0.0.1:${port}" insecure
+  kill "${pf_pid}" 2>/dev/null || true
+  trap - EXIT
+}
+
+cmd_push() {
+  # 1. an explicitly given registry (corporate Quay/Harbor mirror, localhost:5000) wins
+  if [[ -n "${REGISTRY:-}" ]]; then
+    info "using REGISTRY=${REGISTRY}"
+    do_push_plain "${REGISTRY}"
+    return
+  fi
+
+  command -v oc >/dev/null || die "oc not found - set REGISTRY=<host[:port]> to push elsewhere"
+  oc whoami >/dev/null 2>&1 || die "not logged in - run 'oc login' first"
+  ensure_namespace
+
+  # 2. the internal registry's own route, if someone exposed it
+  local registry
+  registry="$(oc get route default-route -n openshift-image-registry \
+    -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+  if [[ -n "${registry}" ]]; then
+    do_push "${registry}"
+    return
+  fi
+
+  # 3. no route: tunnel to the Service instead of asking for a cluster change
+  push_via_port_forward
+}
+
+# Hand over to the interactive installer with the image already filled in;
+# every other answer still comes from the operator.
+cmd_deploy() {
+  [[ -x "${REPO_DIR}/scripts/deploy.sh" ]] || chmod +x "${REPO_DIR}/scripts/deploy.sh"
+  info "starting the installer (default image: ${AUDIT_DEFAULT_IMAGE:-${INTERNAL_REF}})"
+  AUDIT_DEFAULT_IMAGE="${AUDIT_DEFAULT_IMAGE:-${INTERNAL_REF}}" \
+    "${REPO_DIR}/scripts/deploy.sh" "$@"
+}
+
+case "${1:-}" in
+  build)      cmd_build ;;
+  save)       cmd_save ;;
+  package)    cmd_package ;;
+  unpack)     cmd_unpack ;;
+  load)       shift; cmd_load "$@" ;;
+  push)       cmd_push ;;
+  push-local) push_via_port_forward ;;
+  deploy)     shift; cmd_deploy "$@" ;;
+  uninstall)  cmd_deploy --uninstall ;;
+  all)        cmd_build; cmd_push; cmd_deploy ;;
+  *)          sed -n '2,15p' "$0"; exit 1 ;;
+esac

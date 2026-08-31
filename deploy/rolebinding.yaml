@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ocp-audit-agent-local
+  namespace: ocp-audit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ocp-audit-agent-local
+subjects:
+- kind: ServiceAccount
+  name: ocp-audit-agent
+  namespace: ocp-audit

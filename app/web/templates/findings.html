@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <h2>Findings</h2>
+  {% if anonymized %}<p class="privacy-banner">Anonymized output is enabled. Resource identity and evidence are masked before rendering.</p>{% endif %}
+  <form class="filters" method="get">
+    <select name="severity"><option value="">severity</option>{% if filters.severity and filters.severity not in filter_options.severities %}<option value="{{ filters.severity }}" selected>{{ filters.severity }}</option>{% endif %}{% for value in filter_options.severities %}<option value="{{ value }}" {% if filters.severity == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="category"><option value="">category</option>{% if filters.category and filters.category not in filter_options.categories %}<option value="{{ filters.category }}" selected>{{ filters.category }}</option>{% endif %}{% for value in filter_options.categories %}<option value="{{ value }}" {% if filters.category == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="namespace"><option value="">namespace</option>{% if filters.namespace and filters.namespace not in filter_options.namespaces %}<option value="{{ filters.namespace }}" selected>{{ filters.namespace }}</option>{% endif %}{% for value in filter_options.namespaces %}<option value="{{ value }}" {% if filters.namespace == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="resource_kind"><option value="">kind</option>{% if filters.resource_kind and filters.resource_kind not in filter_options.resource_kinds %}<option value="{{ filters.resource_kind }}" selected>{{ filters.resource_kind }}</option>{% endif %}{% for value in filter_options.resource_kinds %}<option value="{{ value }}" {% if filters.resource_kind == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <button>Filter</button>
+    <a class="button-link" href="/findings">Clear</a>
+  </form>
+  <div class="preset-panel">
+    <form class="filters compact-form" method="post" action="/findings/filters">
+      <input name="filter_name" placeholder="save current filters as">
+      <input type="hidden" name="severity" value="{{ filters.severity or '' }}">
+      <input type="hidden" name="category" value="{{ filters.category or '' }}">
+      <input type="hidden" name="namespace" value="{{ filters.namespace or '' }}">
+      <input type="hidden" name="resource_kind" value="{{ filters.resource_kind or '' }}">
+      <button>Save filter</button>
+    </form>
+    <div class="preset-list">
+      {% for preset in saved_filters %}
+      <span class="preset-chip">
+        <a href="/findings?{{ preset.filters|urlencode }}">{{ preset.name }}</a>
+        <small>{{ preset.filters|json }}</small>
+        <form method="post" action="/findings/filters/{{ preset.id }}/delete"><button title="Delete saved filter">x</button></form>
+      </span>
+      {% else %}
+      <span class="empty-inline">No saved finding filters yet.</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div id="findings-table" class="paginated-table" data-paginated><div class="table-loading"><span></span><b>Loading findings…</b></div>
+  <div class="table-scroll"><table class="data-table findings-table"><colgroup><col><col><col><col><col><col><col><col><col></colgroup><thead><tr><th>Severity</th><th>Status</th><th>Category</th><th>Workload / resource</th><th>Finding</th><th>Evidence</th><th>Recommendation</th><th>Seen</th><th>Occurrences</th></tr></thead><tbody>
+  {% for f in findings %}<tr><td><span class="badge {{ f.severity }}">{{ f.severity }}</span></td><td><span class="badge {{ f.temporal_status }}">{{ f.temporal_status }}</span>{% if f.signal_observed_at %}<br><small>{{ f.signal_observed_at }}</small>{% endif %}</td><td>{{ f.category }}</td><td class="mono">{{ f.resource }}{% if f.pod_scope %}<br><span class="workload-scope">{{ f.pod_scope }}</span>{% endif %}</td><td>{{ f.title }}<br><small>{{ f.description }}</small></td><td><code class="finding-evidence">{{ f.evidence_json }}</code></td><td>{{ f.recommendation }}<br><small>{{ f.freshness_reason }}</small></td><td>{{ f.first_seen }}<br>{{ f.last_seen }}</td><td>{{ f.count }}</td></tr>{% else %}<tr><td colspan="9">No findings.</td></tr>{% endfor %}
+  </tbody></table>
+  </div>{% include "_pagination.html" %}</div>
+</section>
+{% endblock %}

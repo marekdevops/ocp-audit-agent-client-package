@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <h2>Generate report</h2>
+  {% if report_running %}<p class="privacy-banner">A report is already being generated. The duplicate request was ignored.</p>{% endif %}
+  <p id="report-generator-status" class="hint" role="status" aria-live="polite"></p>
+  <form method="post" action="/jobs/report" class="report-generator" data-report-generator>
+    <label>Format
+      <select name="fmt"><option value="html">HTML</option><option value="markdown">Markdown</option><option value="json">JSON</option><option value="pdf">PDF</option></select>
+    </label>
+    <fieldset class="report-privacy"><legend>Report privacy</legend>
+      <label><input type="radio" name="anonymize" value="true" {% if report_anonymized %}checked{% endif %}> Anonymized</label>
+      <label><input type="radio" name="anonymize" value="false" {% if not report_anonymized %}checked{% endif %} {% if not allow_ui_deanonymize %}disabled{% endif %}> Internal names visible</label>
+      {% if not allow_ui_deanonymize %}<small>Anonymization is enforced by this deployment.</small>{% endif %}
+    </fieldset>
+    <button type="submit" data-idle-label="Generate report">Generate report</button>
+  </form>
+</section>
+<div id="report-activity" data-live-url="/reports" data-live-active="{{ 'true' if report_jobs_running else 'false' }}">
+  <section>
+    <h2>Reports</h2>
+    <div class="table-scroll"><table><tr><th>Job ID</th><th>Format</th><th>Status</th><th>Started</th><th>Finished</th><th>Path</th><th>Size</th><th>Result</th></tr>
+    {% for r in report_rows %}<tr><td>{{ r.job_id or "—" }}</td><td>{{ r.format }}</td><td><span class="job-status {{ r.status|lower }}"><span aria-hidden="true"></span>{% if r.status == "running" %}Running{% elif r.status == "success" %}Success{% elif r.status == "failed" %}Failed{% else %}{{ r.status }}{% endif %}</span></td><td>{{ r.started_at or "—" }}</td><td>{{ r.finished_at or "—" }}</td><td>{{ r.path or "—" }}</td><td>{{ r.size_bytes if r.size_bytes is not none else "—" }}</td><td>{% if r.report_id %}<a class="button-link" href="/api/reports/{{ r.report_id }}/download">Download report</a>{% elif r.status == "running" %}<span class="job-progress">Generating…</span>{% elif r.error %}<span class="job-error">{{ r.error }}</span>{% else %}{{ r.message or "—" }}{% endif %}</td></tr>{% else %}<tr><td colspan="8">No reports yet.</td></tr>{% endfor %}
+    </table></div>
+  </section>
+</div>
+{% endblock %}

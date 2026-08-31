@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocp-audit-agent-server
+  namespace: ocp-audit
+  annotations:
+    audit.neto.io/ha-optional: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: ocp-audit-agent, component: server}
+  template:
+    metadata:
+      labels: {app: ocp-audit-agent, component: server}
+    spec:
+      serviceAccountName: ocp-audit-agent
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      initContainers:
+      - name: wait-for-postgres
+        image: quay.io/example/ocp-audit-agent:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -ec
+        - until pg_isready -h ocp-audit-postgres -p 5432 -U ocp_audit -d ocp_audit; do sleep 2; done
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 64Mi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: server
+        image: quay.io/example/ocp-audit-agent:latest
+        imagePullPolicy: Always
+        command: ["ocp-audit-agent", "server"]
+        ports:
+        - containerPort: 8080
+        startupProbe:
+          httpGet: {path: /healthz, port: 8080}
+          failureThreshold: 30
+          periodSeconds: 2
+        readinessProbe:
+          httpGet: {path: /readyz, port: 8080}
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: {path: /healthz, port: 8080}
+          periodSeconds: 20
+          failureThreshold: 3
+        envFrom:
+        - configMapRef:
+            name: ocp-audit-agent-config
+        env:
+        - name: AUDIT_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: ocp-audit-postgres, key: password}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: {cpu: "4", memory: 1Gi}
+          limits: {cpu: "4", memory: 8Gi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+          seccompProfile: {type: RuntimeDefault}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: ocp-audit-data}
+      - name: tmp
+        emptyDir: {}

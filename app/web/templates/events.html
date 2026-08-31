@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <h2>Events</h2>
+  {% if anonymized %}<p class="privacy-banner">Anonymized output is enabled. Names and messages are masked before rendering.</p>{% endif %}
+  <form class="filters" method="get">
+    <select name="namespace"><option value="">namespace</option>{% if filters.namespace and filters.namespace not in filter_options.namespaces %}<option value="{{ filters.namespace }}" selected>{{ filters.namespace }}</option>{% endif %}{% for value in filter_options.namespaces %}<option value="{{ value }}" {% if filters.namespace == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="reason"><option value="">reason</option>{% if filters.reason and filters.reason not in filter_options.reasons %}<option value="{{ filters.reason }}" selected>{{ filters.reason }}</option>{% endif %}{% for value in filter_options.reasons %}<option value="{{ value }}" {% if filters.reason == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="type"><option value="">type</option>{% if filters.type and filters.type not in filter_options.types %}<option value="{{ filters.type }}" selected>{{ filters.type }}</option>{% endif %}{% for value in filter_options.types %}<option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="involved_kind"><option value="">kind</option>{% if filters.involved_kind and filters.involved_kind not in filter_options.involved_kinds %}<option value="{{ filters.involved_kind }}" selected>{{ filters.involved_kind }}</option>{% endif %}{% for value in filter_options.involved_kinds %}<option value="{{ value }}" {% if filters.involved_kind == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+    <select name="severity"><option value="">severity</option>{% if filters.severity and filters.severity not in filter_options.severities %}<option value="{{ filters.severity }}" selected>{{ filters.severity }}</option>{% endif %}{% for s in filter_options.severities %}<option value="{{ s }}" {% if filters.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+    <button>Filter</button>
+    <a class="button-link" href="/events">Clear</a>
+  </form>
+  <div class="preset-panel">
+    <form class="filters compact-form" method="post" action="/events/filters">
+      <input name="filter_name" placeholder="save current filters as">
+      <input type="hidden" name="namespace" value="{{ filters.namespace or '' }}">
+      <input type="hidden" name="reason" value="{{ filters.reason or '' }}">
+      <input type="hidden" name="type" value="{{ filters.type or '' }}">
+      <input type="hidden" name="involved_kind" value="{{ filters.involved_kind or '' }}">
+      <input type="hidden" name="severity" value="{{ filters.severity or '' }}">
+      <button>Save filter</button>
+    </form>
+    <div class="preset-list">
+      {% for preset in saved_filters %}
+      <span class="preset-chip">
+        <a href="/events?{{ preset.filters|urlencode }}">{{ preset.name }}</a>
+        <small>{{ preset.filters|json }}</small>
+        <form method="post" action="/events/filters/{{ preset.id }}/delete"><button title="Delete saved filter">x</button></form>
+      </span>
+      {% else %}
+      <span class="empty-inline">No saved event filters yet.</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div id="events-table" class="paginated-table" data-paginated><div class="table-loading"><span></span><b>Loading events…</b></div>
+  <div class="table-scroll"><table id="events" class="data-table events-table"><colgroup><col><col><col><col><col><col><col></colgroup><thead><tr><th>Time</th><th>Severity</th><th>Namespace</th><th>Kind</th><th>Name</th><th>Reason</th><th>Message</th></tr></thead><tbody>
+  {% for e in events %}<tr><td>{{ e.timestamp }}</td><td class="{{ e.severity }}">{{ e.severity }}</td><td>{{ e.namespace or "" }}</td><td>{{ e.involved_kind or "" }}</td><td>{{ e.involved_name or "" }}</td><td>{{ e.reason or "" }}</td><td>{{ e.message or "" }}</td></tr>{% endfor %}
+  </tbody></table></div>{% include "_pagination.html" %}</div>
+</section>
+{% if live_events %}
+<script>
+const source = new EventSource("/api/stream/events");
+const cell = (value, className) => {
+  const td = document.createElement("td");
+  if (className) td.className = className;
+  td.textContent = value || "";
+  return td;
+};
+source.onmessage = (msg) => {
+  if (Number(new URL(window.location.href).searchParams.get("page") || "1") !== 1) return;
+  const e = JSON.parse(msg.data);
+  const row = document.createElement("tr");
+  row.append(cell(e.timestamp));
+  row.append(cell(e.severity, e.severity));
+  row.append(cell(e.namespace));
+  row.append(cell(e.involved_kind));
+  row.append(cell(e.involved_name));
+  row.append(cell(e.reason));
+  row.append(cell(e.message));
+  const body = document.querySelector("#events tbody");
+  body.prepend(row);
+  while (body.rows.length > 50) body.deleteRow(body.rows.length - 1);
+};
+</script>
+{% endif %}
+{% endblock %}
